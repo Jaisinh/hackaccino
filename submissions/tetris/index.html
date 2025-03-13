@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>3D Tetris</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.4.2/aframe.min.js"></script>
+  <style>
+    body { margin: 0; }
+    .ui {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      font-family: sans-serif;
+      z-index: 100;
+    }
+    .controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 100;
+    }
+    .controls button {
+      padding: 10px 15px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="ui">
+    <h2>Score: <span id="score">0</span></h2>
+    <h3>Level: <span id="level">1</span></h3>
+  </div>
+  
+  <div class="controls">
+    <button id="left">←</button>
+    <button id="rotate">Rotate</button>
+    <button id="right">→</button>
+    <button id="down">↓</button>
+  </div>
+  
+  <a-scene>
+    <a-sky color="#222"></a-sky>
+    <a-entity position="0 15 25" rotation="-15 0 0">
+      <a-camera></a-camera>
+    </a-entity>
+    <a-entity light="type: ambient; intensity: 0.5"></a-entity>
+    <a-entity light="type: directional; intensity: 0.8" position="10 20 10"></a-entity>
+    <a-entity id="board" position="-5 0 0">
+    </a-entity>
+    <a-plane position="0 10 -2" width="15" height="25" color="#111"></a-plane>
+    <a-plane position="0 -0.5 0" rotation="-90 0 0" width="30" height="30" color="#333"></a-plane>
+    <a-entity id="next" position="8 18 0">
+      <a-text value="NEXT" position="0 2 0" scale="2 2 2" color="white" align="center"></a-text>
+    </a-entity>
+  </a-scene>
+  <script>
+    const WIDTH = 10;
+    const HEIGHT = 20;
+    const SIZE = 1;
+    const board = document.getElementById('board');
+    const nextDisplay = document.getElementById('next');
+    const scoreEl = document.getElementById('score');
+    const levelEl = document.getElementById('level');  
+    let grid = makeGrid();
+    let blocks = {};
+    let current = null;
+    let next = null;
+    let score = 0;
+    let level = 1;
+    let lines = 0;
+    let gameOver = false;
+    let timer = null;
+    let speed = 1000;
+    const shapes = [
+      {
+        blocks: [[1, 1, 1, 1]],
+        color: '#00FFFF'
+      },
+      {
+        blocks: [[1, 0, 0], [1, 1, 1]],
+        color: '#0000FF'
+      },
+      {
+        blocks: [[0, 0, 1], [1, 1, 1]],
+        color: '#FF7F00'
+      },
+      {
+        blocks: [[1, 1], [1, 1]],
+        color: '#FFFF00'
+      },
+      {
+        blocks: [[0, 1, 1], [1, 1, 0]],
+        color: '#00FF00'
+      },
+      {
+        blocks: [[0, 1, 0], [1, 1, 1]],
+        color: '#800080'
+      },
+      {
+        blocks: [[1, 1, 0], [0, 1, 1]],
+        color: '#FF0000'
+      }
+    ];
+    
+    function makeGrid() {
+      let g = [];
+      for (let i = 0; i < HEIGHT; i++) {
+        g.push(new Array(WIDTH).fill(0));
+      }
+      return g;
+    }
+    
+    function init() {
+      createBoard();
+      createWalls();
+      createNextPiece();
+      spawnPiece();
+      startGame();
+      setupKeys();
+    }
+    
+    function createBoard() {
+      for (let x = 0; x <= WIDTH; x++) {
+        let line = document.createElement('a-entity');
+        line.setAttribute('geometry', `primitive: box; width: 0.05; height: ${HEIGHT}; depth: 0.05`);
+        line.setAttribute('material', 'color: #555');
+        line.setAttribute('position', `${x} ${HEIGHT/2} 0`);
+        board.appendChild(line);
+      }
+      
+      for (let y = 0; y <= HEIGHT; y++) {
+        let line = document.createElement('a-entity');
+        line.setAttribute('geometry', `primitive: box; width: ${WIDTH}; height: 0.05; depth: 0.05`);
+        line.setAttribute('material', 'color: #555');
+        line.setAttribute('position', `${WIDTH/2} ${y} 0`);
+        board.appendChild(line);
+      }
+    }
+    
+    function createWalls() {
+      let base = document.createElement('a-box');
+      base.setAttribute('width', WIDTH + 2);
+      base.setAttribute('height', 0.5);
+      base.setAttribute('depth', 2);
+      base.setAttribute('position', `${WIDTH/2} -0.25 0`);
+      base.setAttribute('color', '#444');
+      board.appendChild(base);
+      
+      let left = document.createElement('a-box');
+      left.setAttribute('width', 0.5);
+      left.setAttribute('height', HEIGHT);
+      left.setAttribute('depth', 1);
+      left.setAttribute('position', `-0.25 ${HEIGHT/2} 0`);
+      left.setAttribute('color', '#444');
+      board.appendChild(left);
+      
+      let right = document.createElement('a-box');
+      right.setAttribute('width', 0.5);
+      right.setAttribute('height', HEIGHT);
+      right.setAttribute('depth', 1);
+      right.setAttribute('position', `${WIDTH + 0.25} ${HEIGHT/2} 0`);
+      right.setAttribute('color', '#444');
+      board.appendChild(right);
+    }
+    
+    function createNextPiece() {
+      const idx = Math.floor(Math.random() * shapes.length);
+      next = {
+        shape: JSON.parse(JSON.stringify(shapes[idx].blocks)),
+        color: shapes[idx].color,
+        width: shapes[idx].blocks[0].length,
+        height: shapes[idx].blocks.length
+      };
+      
+      showNextPiece();
+    }
+    
+    function showNextPiece() {
+      while (nextDisplay.firstChild) {
+        nextDisplay.removeChild(nextDisplay.firstChild);
+      }
+      
+      for (let y = 0; y < next.shape.length; y++) {
+        for (let x = 0; x < next.shape[y].length; x++) {
+          if (next.shape[y][x]) {
+            let block = document.createElement('a-box');
+            block.setAttribute('width', SIZE * 0.9);
+            block.setAttribute('height', SIZE * 0.9);
+            block.setAttribute('depth', SIZE * 0.9);
+            block.setAttribute('color', next.color);
+            block.setAttribute('position', `${x} ${-y} 0`);
+            nextDisplay.appendChild(block);
+          }
+        }
+      }
+    }
+    
+    function spawnPiece() {
+      current = {
+        ...next,
+        x: Math.floor((WIDTH - next.width) / 2),
+        y: HEIGHT
+      };
+      
+      if (!canMove(current.x, current.y - 1, current.shape)) {
+        gameOver = true;
+        clearInterval(timer);
+        alert(`Game Over! Score: ${score}`);
+        return;
+      }
+      
+      createNextPiece();
+      drawBoard();
+    }
+    
+    function canMove(x, y, shape) {
+      for (let row = 0; row < shape.length; row++) {
+        for (let col = 0; col < shape[row].length; col++) {
+          if (!shape[row][col]) continue;
+          
+          let newX = x + col;
+          let newY = y - row;
+          
+          if (newX < 0 || newX >= WIDTH || newY < 0 || newY >= HEIGHT) {
+            return false;
+          }
+          
+          if (grid[newY][newX]) {
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+    
+    function lockPiece() {
+      for (let row = 0; row < current.shape.length; row++) {
+        for (let col = 0; col < current.shape[row].length; col++) {
+          if (!current.shape[row][col]) continue;
+          
+          let x = current.x + col;
+          let y = current.y - row;
+          
+          if (y >= 0 && y < HEIGHT) {
+            grid[y][x] = current.color;
+          }
+        }
+      }
+      
+      checkLines();
+      spawnPiece();
+    }
+    
+    function checkLines() {
+      let linesCleared = 0;
+      
+      for (let y = 0; y < HEIGHT; y++) {
+        let complete = true;
+        
+        for (let x = 0; x < WIDTH; x++) {
+          if (!grid[y][x]) {
+            complete = false;
+            break;
+          }
+        }
+        
+        if (complete) {
+          for (let y2 = y; y2 < HEIGHT - 1; y2++) {
+            grid[y2] = [...grid[y2 + 1]];
+          }
+          
+          grid[HEIGHT - 1] = new Array(WIDTH).fill(0);
+          
+          linesCleared++;
+          y--;
+        }
+      }
+      
+      if (linesCleared > 0) {
+        const points = [0, 40, 100, 300, 1200];
+        score += points[linesCleared] * level;
+        lines += linesCleared;
+        level = Math.floor(lines / 10) + 1;
+        
+        speed = Math.max(100, 1000 - (level - 1) * 100);
+        clearInterval(timer);
+        timer = setInterval(tick, speed);
+        
+        scoreEl.textContent = score;
+        levelEl.textContent = level;
+      }
+    }
+    
+    function rotate() {
+      if (gameOver) return;
+      
+      let newShape = [];
+      let rows = current.shape.length;
+      let cols = current.shape[0].length;
+      
+      for (let col = 0; col < cols; col++) {
+        let newRow = [];
+        for (let row = rows - 1; row >= 0; row--) {
+          newRow.push(current.shape[row][col]);
+        }
+        newShape.push(newRow);
+      }
+      
+      let newWidth = newShape[0].length;
+      let newX = current.x;
+      
+      if (newX + newWidth > WIDTH) {
+        newX = WIDTH - newWidth;
+      }
+      
+      if (canMove(newX, current.y, newShape)) {
+        current.shape = newShape;
+        current.x = newX;
+        current.width = newWidth;
+        current.height = newShape.length;
+        drawBoard();
+      }
+    }
+    
+    function moveLeft() {
+      if (gameOver) return;
+      
+      if (canMove(current.x - 1, current.y, current.shape)) {
+        current.x--;
+        drawBoard();
+      }
+    }
+    
+    function moveRight() {
+      if (gameOver) return;
+      
+      if (canMove(current.x + 1, current.y, current.shape)) {
+        current.x++;
+        drawBoard();
+      }
+    }
+    
+    function moveDown() {
+      if (gameOver) return;
+      
+      if (canMove(current.x, current.y - 1, current.shape)) {
+        current.y--;
+        drawBoard();
+      } else {
+        lockPiece();
+      }
+    }
+    
+    function hardDrop() {
+      if (gameOver) return;
+      
+      while (canMove(current.x, current.y - 1, current.shape)) {
+        current.y--;
+      }
+      
+      drawBoard();
+      lockPiece();
+    }
+    
+    function drawBoard() {
+      let oldBlocks = document.querySelectorAll('.active-block');
+      oldBlocks.forEach(b => b.parentNode.removeChild(b));
+      
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          let id = `block-${x}-${y}`;
+          
+          if (grid[y][x]) {
+            if (!blocks[id]) {
+              let block = document.createElement('a-box');
+              block.setAttribute('id', id);
+              block.setAttribute('width', SIZE * 0.9);
+              block.setAttribute('height', SIZE * 0.9);
+              block.setAttribute('depth', SIZE * 0.9);
+              block.setAttribute('color', grid[y][x]);
+              block.setAttribute('position', `${x + 0.5} ${y + 0.5} 0`);
+              
+              board.appendChild(block);
+              blocks[id] = block;
+            }
+          } else if (blocks[id]) {
+            board.removeChild(blocks[id]);
+            delete blocks[id];
+          }
+        }
+      }
+      
+      if (current) {
+        for (let row = 0; row < current.shape.length; row++) {
+          for (let col = 0; col < current.shape[row].length; col++) {
+            if (!current.shape[row][col]) continue;
+            
+            let x = current.x + col;
+            let y = current.y - row;
+            
+            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+              let block = document.createElement('a-box');
+              block.setAttribute('class', 'active-block');
+              block.setAttribute('width', SIZE * 0.9);
+              block.setAttribute('height', SIZE * 0.9);
+              block.setAttribute('depth', SIZE * 0.9);
+              block.setAttribute('color', current.color);
+              block.setAttribute('position', `${x + 0.5} ${y + 0.5} 0`);
+              
+              board.appendChild(block);
+            }
+          }
+        }
+        
+        let ghostY = current.y;
+        while (canMove(current.x, ghostY - 1, current.shape)) {
+          ghostY--;
+        }
+        
+        if (ghostY !== current.y) {
+          for (let row = 0; row < current.shape.length; row++) {
+            for (let col = 0; col < current.shape[row].length; col++) {
+              if (!current.shape[row][col]) continue;
+              
+              let x = current.x + col;
+              let y = ghostY - row;
+              
+              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+                let ghost = document.createElement('a-box');
+                ghost.setAttribute('class', 'active-block');
+                ghost.setAttribute('width', SIZE * 0.9);
+                ghost.setAttribute('height', SIZE * 0.9);
+                ghost.setAttribute('depth', SIZE * 0.2);
+                ghost.setAttribute('material', `color: ${current.color}; opacity: 0.3; wireframe: true`);
+                ghost.setAttribute('position', `${x + 0.5} ${y + 0.5} 0`);
+                
+                board.appendChild(ghost);
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    function tick() {
+      moveDown();
+    }
+    
+    function startGame() {
+      timer = setInterval(tick, speed);
+    }
+    
+    function setupKeys() {
+      document.getElementById('left').addEventListener('click', moveLeft);
+      document.getElementById('right').addEventListener('click', moveRight);
+      document.getElementById('rotate').addEventListener('click', rotate);
+      document.getElementById('down').addEventListener('click', moveDown);
+      
+      document.addEventListener('keydown', (e) => {
+        switch (e.key) {
+          case 'ArrowLeft':
+            moveLeft();
+            break;
+          case 'ArrowRight':
+            moveRight();
+            break;
+          case 'ArrowUp':
+            rotate();
+            break;
+          case 'ArrowDown':
+            moveDown();
+            break;
+          case ' ':
+            hardDrop();
+            break;
+        }
+      });
+    }
+    
+    window.onload = init;
+  </script>
+</body>
+</html>
